@@ -14,6 +14,12 @@ This document describes how **OLS** (Object-Level Security) and **RLS** (Row-Lev
 - **OLS** = which apps/audiences/reports the user can open.
 - **RLS** = which rows (Entity, Client, PC, etc.) the user sees inside the dataset.
 
+### Important clarifications
+
+- **OLS = access to object only, not data.** OLS does not define or control which rows the user sees; it only controls whether they can open the app/report/audience. When we say "no RLS = they see all data," that means: they already have object access (OLS), and because no RLS filter is applied, the app/report shows all rows — so "all data" is due to the *absence* of a row filter, not because OLS "gives" data.
+
+- **RLS is across the workspace/dataset, not tied to one report.** RLS is defined per workspace security model and applies to the dataset. Any report or app in that workspace that uses that dataset sees the same RLS filter for that user. So RLS applies **across** all reports/apps using that dataset, not only to one particular report.
+
 ---
 
 ## 2. Use Case: OLS Only (No RLS)
