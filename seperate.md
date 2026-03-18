@@ -420,6 +420,8 @@ flowchart TB
 
 ## Proposal: One AD Group for App-Level OLS + RLS; Separate Groups per Audience
 
+**Detailed Q&A:** For a structured comparison of the **original plan** (managed OLS via AD sync, RLS via Share* views only) and the **proposed plan**, including clarification that **no Azure security group per dimension** is required, see **`Docs/OLS_RLS_ORIGINAL_VS_PROPOSED_QA.md`** (50 questions and answers).
+
 ### What is proposed (summary)
 
 - **One shared AD group per app** (or per workspace) that is used for **both**:
