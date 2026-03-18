@@ -420,22 +420,147 @@ flowchart TB
 
 ## Proposal: One AD Group for App-Level OLS + RLS; Separate Groups per Audience
 
-**Context:** When the downstream uses the **same** AD group for both OLS (app access) and RLS (data access), the sync adds the user once and they get both. When **different** groups are used for RLS, someone must manually add the user to the RLS group for data access.
+### What is proposed (summary)
 
-**Proposed design:**
+- **One shared AD group per app** (or per workspace) that is used for **both**:
+  - **App-level OLS** — “can open this app”
+  - **RLS** — “has data access” (Power BI uses this group for the RLS role / data scope)
+- When a user is added to this **one** group, they get app access and data scope without any manual “add to RLS group” step.
+- **Separate AD groups per audience** — “which audience(s) can this user see?” (e.g. Finance Audience, Exec Audience). These stay as today: Sakura’s OLS sync adds/removes users to **audience** groups from `Auto.OLSGroupMemberships` (using `AudienceEntraGroupUID`).
+- So: **shared group = app + data access** (one add, no manual RLS group); **audience groups = which content/audience** (existing OLS sync).
 
-- **One AD group** used for **both** app-level OLS and RLS (so one sync/add gives the user app access and data scope; no manual "add to RLS group").
-- **Separate AD groups per audience** for OLS only; these are already handled by the existing OLS AD sync process (e.g. `Auto.OLSGroupMemberships` → audience `AudienceEntraGroupUID`).
+---
 
-**Feasibility:**
+### Diagram: Current vs proposed
 
-- **Conceptually feasible.** Downstream (e.g. Power BI) can be configured so that:
-  - The **shared** group grants both "can open the app" and the RLS role/data scope.
-  - **Per-audience** groups grant which audience(s) the user belongs to; the current Sakura OLS sync already populates these from `Auto.OLSGroupMemberships`.
-- **Gap today:** Sakura's sync only adds users to **audience-level** (and optionally report-level) groups from `Auto.OLSGroupMemberships`. It does not currently add users to a single "app + RLS" group. To support the shared group, you would need either:
-  - A **sync source** (e.g. a view or feed) that lists "add this user to this app+RLS group" when they have both OLS (to that app) and RLS (for that workspace/domain), and extend the sync script to consume it, or
-  - A separate process (e.g. pipeline or small script) that reads approved OLS+RLS state and adds users to the shared group.
-- **Summary:** Using one AD group for app-level OLS and RLS, and different groups per audience handled by the existing OLS sync, is a feasible and sensible approach; it requires the downstream to use the shared group for both app access and data scope, and an extension to Sakura (or a side process) to populate that shared group, while per-audience groups continue to be handled by the current OLS AD sync process.
+**Today (current):** Sync only fills **per-audience** groups. If Power BI uses a *different* group for RLS, that RLS group is never filled by Sakura → someone must add users manually.
+
+```mermaid
+flowchart TB
+    subgraph Today["Current (problem)"]
+        T1[User approved OLS + RLS]
+        T2[Auto.OLSGroupMemberships]
+        T3[Sync adds user to AUDIENCE group only]
+        T4[Power BI: audience group = can open audience]
+        T5[Power BI: RLS = separate group?]
+        T6[RLS group not filled by Sakura]
+        T7[Manual add to RLS group needed]
+        T1 --> T2 --> T3 --> T4
+        T3 -.-> T5
+        T5 --> T6 --> T7
+    end
+```
+
+**Proposed:** One shared group (app + RLS) filled by Sakura; audience groups still filled by existing sync. No manual RLS group.
+
+```mermaid
+flowchart TB
+    subgraph Proposed["Proposed (one group for app + RLS)"]
+        P1[User approved OLS + RLS]
+        P2[New: desired state for shared group]
+        P3[Sync adds user to SHARED group]
+        P4[Sync adds user to AUDIENCE groups]
+        P5[Power BI: shared group = app access AND RLS role]
+        P6[Power BI: audience groups = which audience]
+        P7[One sync = app + data + audience]
+        P1 --> P2 --> P3
+        P1 --> P4
+        P3 --> P5
+        P4 --> P6
+        P5 --> P7
+        P6 --> P7
+    end
+```
+
+**Group layout (proposed):**
+
+```mermaid
+flowchart LR
+    subgraph Entra["Entra (Azure AD) groups"]
+        G1["Shared group (one per app)<br/>→ App-level OLS + RLS"]
+        G2["Audience A group<br/>→ OLS: can see Audience A"]
+        G3["Audience B group<br/>→ OLS: can see Audience B"]
+    end
+
+    subgraph Sakura["Sakura sync"]
+        S1["New source: add user to shared group<br/>when they have OLS + RLS for this app"]
+        S2["Existing: Auto.OLSGroupMemberships<br/>add user to audience groups"]
+    end
+
+    S1 --> G1
+    S2 --> G2
+    S2 --> G3
+```
+
+---
+
+### Architecture changes needed to support this
+
+| Layer | Change | Description |
+|-------|--------|-------------|
+| **1. Database** | Store the “app + RLS” group ID | Add a column (or use existing `WorkspaceApps.AppEntraGroupUID`) to hold the **shared** Entra group GUID for “app-level OLS + RLS.” If the group is per workspace instead of per app, add/store it on Workspaces. |
+| **2. Database** | New view (or extend existing) | Create a view that returns desired **(RequestedFor, EntraGroupUID)** for the **shared** group: include a user when they have **both** (a) approved OLS to at least one audience in that app (or workspace), and (b) approved RLS for that workspace/domain. Same shape as `Auto.OLSGroupMemberships` (RequestedFor, EntraGroupUID, LastChangeDate) so the sync can read it. Example name: `Auto.AppRLSGroupMemberships` or extend logic in sync to also read “app+RLS” memberships from a second view. |
+| **3. Sync script** | Read two sources | `SakuraV2ADSync.ps1` today only reads `[Auto].[OLSGroupMemberships]`. Extend it to **also** read the new view (e.g. `Auto.AppRLSGroupMemberships`) and merge the desired (user, group) list so that the script adds/removes users in **both** the shared app+RLS group and the per-audience groups. Same diff-and-update logic, just more groups. |
+| **4. Downstream (Power BI)** | Config only | Configure the app so that the **shared** group is used both for “who can open the app” and for the **RLS role** (data scope). No Sakura code change; see “What Power BI people need to know” below. |
+
+Summary: **DB** = store shared group GUID + new view; **Sync** = read that view and sync it like audience groups; **Power BI** = use shared group for app + RLS.
+
+---
+
+### What Power BI / report owners need to know (plain explanation)
+
+**Who this is for:** People who configure Power BI apps, workspaces, and RLS roles (e.g. report owners, workspace admins, BI team).
+
+**What we’re doing:**  
+We use **one** Entra (Azure AD) group for both “can open this app” and “which data (RLS) this user can see.” That one group is kept in sync by Sakura when users are approved for both app access and data access. **Separate** groups per audience still decide “which audience(s)” the user sees; those are also synced by Sakura.
+
+**What you need to do:**
+
+1. **Create (or designate) one Entra group per app** that will mean: “member = can open this app **and** has RLS data access.” Give that group’s GUID to the Sakura team so it can be stored and synced (see architecture above).
+2. **In Power BI:**
+   - **App access:** Assign this **same** group to the app (or workspace) so that members can open the app.
+   - **RLS (recommended — keep Share*.RLS):** Treat the shared group as a **gate** (“user is allowed RLS for this app”). The **actual row filter** should still come from **Share*.RLS** (or the security tables built from it): filter rows by user identity + dimension keys from the view. Do **not** use the shared group as the RLS role that defines data scope, or Share*.RLS is bypassed and the original plan is broken. So: shared group = app access + “has RLS”; Share*.RLS = which rows they see.
+3. **Audience groups:** Keep using the **per-audience** Entra groups (managed by Sakura) to control which audience(s) a user is in. Sakura will continue to add/remove users to those audience groups when they are approved for OLS to that audience.
+4. **Result:** When Sakura adds a user to the shared group, they automatically get app access and data access. When Sakura adds them to an audience group, they get that audience. No manual step to “add to RLS group.”
+
+**If you currently use a different group for RLS:**  
+Switching to this model means: stop using that separate RLS-only group and use the **shared** (app + RLS) group for both app permission and the RLS role. After that, Sakura sync will fully maintain who has data access via that one group.
+
+---
+
+### Does this break the Share* domain RLS (original plan)? — Important
+
+**Original V2 plan:** RLS is **view-driven**. Approved RLS is stored in `RLSPermissions` + domain detail tables and exposed via **Share*.RLS** (ShareAMER.RLS, ShareEMEA.RLS, etc.). Power BI (or Fabric) reads these views (or tables built from them) and filters rows by **user + dimension keys**. There is **no** AD group for RLS in that design; the view is the source of truth for “which rows this user sees.”
+
+**Risk if we use the shared group as the RLS role:**  
+If Power BI is configured so that “members of the shared group” get a **fixed** data scope (e.g. one role = one set of dimension values), then **group membership** would define row-level access and **Share*.RLS would no longer drive** the actual filter. That would **break or sideline** the original domain RLS view logic: per-user, per-domain dimension keys in Share*.RLS would be ignored for that app.
+
+**Recommended approach — do not break Share*.RLS:**
+
+- Use the **shared group** only for:
+  - **App-level OLS** — who can open the app.
+  - **Gate** — “this user is allowed to have RLS for this app” (so we sync them into the group when they have both OLS and RLS approval).
+- Keep **Share*.RLS as the source of truth** for **which rows** each user sees. Power BI (or the downstream pipeline) should **still read Share*.RLS** (or the security tables built from it) and apply the row filter by **user identity + dimension keys** from the view. The shared group does **not** replace the view; it only ensures the user is in the app and is eligible for RLS.
+- Result: No manual “add to RLS group”; Sync adds user to shared group when they have OLS + RLS. **Actual data scope** still comes from Share*.RLS → original plan intact.
+
+```mermaid
+flowchart LR
+    subgraph Safe["Safe: Shared group = gate only; Share*.RLS = row filter"]
+        A[User in shared group] --> B[Can open app]
+        A --> C[Eligible for RLS]
+        D[ShareAMER.RLS, ShareEMEA.RLS, ...] --> E[Power BI reads view]
+        E --> F[Filter rows by user + dimension keys]
+        C --> F
+    end
+
+    subgraph Risky["Risky: Group = RLS role (replaces view)"]
+        G[User in shared group] --> H[Power BI: role = fixed scope]
+        I[Share*.RLS ignored]
+        H --> I
+    end
+```
+
+**Summary:** The proposal (one AD group for app-level OLS + RLS, separate groups per audience) **does not have to** break Share* domain RLS. Use the shared group as **app access + gate**; keep **Share*.RLS** as the source of truth for row-level scope. If instead the downstream uses the shared group **as** the RLS role (group membership = data scope), then yes — that would break the original view-based RLS plan for that app.
 
 ---
 
