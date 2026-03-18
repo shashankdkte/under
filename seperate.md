@@ -1,3 +1,245 @@
+# OLS and RLS Use Cases and Diagrams
+
+This document describes how **OLS** (Object-Level Security) and **RLS** (Row-Level Security) work in Sakura, with Mermaid diagrams for each use case.
+
+---
+
+## 1. What OLS and RLS Give
+
+| | OLS | RLS |
+|---|-----|-----|
+| **What the request gives** | Access to the **object** (app, audience, or report) | Access to **data** (which rows the user can see) |
+| **Meaning** | "Can they open it?" | "What rows can they see inside it?" |
+
+- **OLS** = which apps/audiences/reports the user can open.
+- **RLS** = which rows (Entity, Client, PC, etc.) the user sees inside the dataset.
+
+### Important clarifications
+
+- **OLS = access to object only, not data.** OLS does not define or control which rows the user sees; it only controls whether they can open the app/report/audience. When we say "no RLS = they see all data," that means: they already have object access (OLS), and because no RLS filter is applied, the app/report shows all rows — so "all data" is due to the *absence* of a row filter, not because OLS "gives" data.
+
+- **RLS is across the workspace/dataset, not tied to one report.** RLS is defined per workspace security model and applies to the dataset. Any report or app in that workspace that uses that dataset sees the same RLS filter for that user. So RLS applies **across** all reports/apps using that dataset, not only to one particular report.
+
+---
+
+## 2. Use Case: OLS Only (No RLS)
+
+**What’s approved:** OLS only. No RLS permission.
+
+**Result:** User can open the app/report and sees **all data** in that object (no row filter).
+
+```mermaid
+flowchart LR
+    A[Request] --> B[OLS approved]
+    B --> C[User in Entra group]
+    C --> D[Can OPEN app/report]
+    D --> E[Sees ALL data - no RLS filter]
+```
+
+---
+
+## 3. Use Case: RLS Only (No OLS)
+
+**What’s approved:** RLS only. No OLS (no audience/report/Entra group).
+
+**Result:** User has a row filter defined but **cannot open** the app/report (no group membership). RLS is useless until they also get OLS.
+
+```mermaid
+flowchart LR
+    A[Request] --> B[RLS approved]
+    B --> C[Share*.RLS has user + keys]
+    C --> D[No Entra group - cannot open app]
+    D --> E[No access in practice]
+```
+
+---
+
+## 4. Use Case: Both OLS and RLS
+
+**What’s approved:** OLS (access to app/report) and RLS (which rows they can see).
+
+**Result:** User can open the app and sees **only** the rows allowed by RLS.
+
+```mermaid
+flowchart LR
+    A[Request] --> B[OLS + RLS approved]
+    B --> C[User in group + RLS keys in Share*.RLS]
+    C --> D[Can OPEN app]
+    D --> E[Sees ONLY allowed rows]
+```
+
+---
+
+## 5. Summary: All Three Cases
+
+```mermaid
+flowchart TB
+    subgraph OLS_only["OLS only"]
+        O1[Request] --> O2[OLS approved]
+        O2 --> O3[User in group]
+        O3 --> O4[Can open app - Sees ALL data]
+    end
+
+    subgraph RLS_only["RLS only"]
+        R1[Request] --> R2[RLS approved]
+        R2 --> R3[Share*.RLS has keys]
+        R3 --> R4[Cannot open app - No OLS]
+    end
+
+    subgraph Both["Both OLS + RLS"]
+        B1[Request] --> B2[OLS + RLS approved]
+        B2 --> B3[User in group + RLS keys]
+        B3 --> B4[Can open app - Sees ONLY allowed rows]
+    end
+```
+
+| Case | Can open app/report? | What data they see |
+|------|----------------------|---------------------|
+| **OLS only** | Yes | All data (no RLS filter) |
+| **RLS only** | No | Nothing (can't open it) |
+| **Both** | Yes | Only rows allowed by RLS |
+
+---
+
+## 6. Managed OLS Only — End-to-End
+
+Full flow from request to user in Entra group (managed apps only, OLSMode = 0).
+
+```mermaid
+flowchart TB
+    A[1. Request - PermissionRequests<br/>RequestedFor, WorkspaceId] --> B[2. OLS Approval - PermissionHeaders<br/>PermissionType=0, ApprovalStatus=2]
+    B --> C[3. OLSPermissions<br/>OLSItemType=1 Audience, OLSItemId→AppAudiences]
+    C --> D[4. AppAudiences + WorkspaceApps<br/>OLSMode=0, AudienceEntraGroupUID]
+    D --> E[5. Auto.OLSGroupMemberships<br/>RequestedFor, EntraGroupUID]
+    E --> F[6. Sync - SakuraV2ADSync.ps1<br/>Add user to Entra group]
+    F --> G[7. User can OPEN app/audience]
+```
+
+---
+
+## 7. Managed OLS + RLS — End-to-End (Both Branches)
+
+One request with both OLS and RLS; managed OLS path + RLS path to filtered data.
+
+```mermaid
+flowchart TB
+    A[1. Request - PermissionRequests] --> B1[2a. OLS Approval<br/>PermissionType=0, Approved]
+    A --> B2[2b. RLS Approval<br/>PermissionType=1, Approved]
+
+    B1 --> C1[3a. OLSPermissions → AppAudiences<br/>OLSMode=0]
+    B2 --> C2[3b. RLSPermissions<br/>SecurityModelId, SecurityTypeLoVId]
+
+    C1 --> D1[4a. Auto.OLSGroupMemberships]
+    C2 --> D2[4b. RLSPermission*Details<br/>EntityKey, ClientKey, PCKey...]
+
+    D1 --> E1[5a. Sync → user in Entra group]
+    D2 --> E2[5b. ShareAMER.RLS / ShareEMEA.RLS...]
+
+    E1 --> F1[6a. User can OPEN app/report]
+    E2 --> F2[6b. Power BI / App filters rows]
+
+    F1 --> G[End: User has access + filtered data]
+    F2 --> G
+```
+
+---
+
+## 8. Managed vs Not Managed OLS (Split)
+
+Where the OLS path splits: managed (sync) vs not managed (app owner).
+
+```mermaid
+flowchart TB
+    A[OLSPermissions - Audience] --> B{WorkspaceApps.OLSMode}
+    B -->|0 = Managed| C[Auto.OLSGroupMemberships]
+    B -->|1 = NotManaged| D[ShareAMER.OLS / ShareEMEA.OLS...]
+
+    C --> E[Sync adds user to Entra group]
+    D --> F[App owner adds user manually]
+
+    E --> G[User in group automatically after sync]
+    F --> H[User in group only after owner adds]
+```
+
+---
+
+## 9. RLS Flow — Per Domain
+
+RLS is stored per domain in detail tables and exposed via Share schema views.
+
+```mermaid
+flowchart TB
+    A[PermissionHeaders - RLS Approved] --> B[RLSPermissions<br/>PermissionHeaderId, SecurityModelId]
+    B --> C{Domain}
+    C --> D1[RLSPermissionAMERDetails]
+    C --> D2[RLSPermissionEMEADetails]
+    C --> D3[RLSPermissionCDIDetails]
+    C --> D4[RLSPermissionGIDetails]
+    C --> D5[RLSPermissionWFIDetails]
+    C --> D6[RLSPermissionFUMDetails]
+
+    D1 --> E1[ShareAMER.RLS]
+    D2 --> E2[ShareEMEA.RLS]
+    D3 --> E3[ShareCDI.RLS]
+    D4 --> E4[ShareGI.RLS]
+    D5 --> E5[ShareWFI.RLS]
+    D6 --> E6[ShareFUM.RLS]
+
+    E1 --> F[Power BI / App - Filter rows by user]
+    E2 --> F
+    E3 --> F
+    E4 --> F
+    E5 --> F
+    E6 --> F
+```
+
+---
+
+## 10. OLS Item Types (Audience vs Report)
+
+OLS can point to an **audience** (app) or a **standalone report** (SAR). Only audiences with OLSMode=0 feed the managed sync.
+
+```mermaid
+flowchart TB
+    A[OLSPermissions] --> B{OLSItemType}
+    B -->|1 = Audience| C[AppAudiences<br/>AudienceEntraGroupUID]
+    B -->|0 = Report SAR| D[WorkspaceReports<br/>ReportEntraGroupUID]
+
+    C --> E{OLSMode?}
+    E -->|0 Managed| F[Auto.OLSGroupMemberships → Sync]
+    E -->|1 NotManaged| G[Share*.OLS → Owner adds]
+
+    D --> H[Share*.OLS only - no sync<br/>Report owner adds user]
+```
+
+---
+
+## 11. Sequence: Managed OLS + RLS (One User)
+
+```mermaid
+sequenceDiagram
+    participant Req as Request
+    participant PH as PermissionHeaders
+    participant OLS as OLSPermissions
+    participant Auto as Auto.OLSGroupMemberships
+    participant Sync as Sync Script
+    participant RLS_T as RLSPermissions
+    participant Share as Share*.RLS
+    participant User as User
+
+    Req->>PH: OLS + RLS headers
+    PH->>OLS: OLS item = Audience
+    OLS->>Auto: RequestedFor, EntraGroupUID
+    Auto->>Sync: Read view
+    Sync->>User: Add to Entra group → can open app
+
+    PH->>RLS_T: RLS permission
+    RLS_T->>Share: Detail keys (Client, PC...)
+    Share->>User: Power BI filters rows → sees only allowed data
+```
+
+---
+
 ## Why “Same vs Separate AD Groups for OLS and RLS” Makes Sense in V1 but Not in V2
 
 This section explains in detail why the question *“If we have the same AD group for OLS and RLS we have no issue; what if we have separate AD groups for OLS and RLS?”* is meaningful in **Sakura V1** but **does not apply** in **Sakura V2**.
@@ -173,3 +415,38 @@ flowchart TB
 
 - **V1:** OLS and RLS were both enforced by **group membership**, so the question “same group vs separate groups?” is about how many groups you use and whether the sync fills both.
 - **V2:** OLS is enforced by **group membership**; RLS is enforced by **views** (Share*.RLS). There is no “RLS group,” so the question does not apply.
+
+---
+
+## Proposal: One AD Group for App-Level OLS + RLS; Separate Groups per Audience
+
+**Context:** When the downstream uses the **same** AD group for both OLS (app access) and RLS (data access), the sync adds the user once and they get both. When **different** groups are used for RLS, someone must manually add the user to the RLS group for data access.
+
+**Proposed design:**
+
+- **One AD group** used for **both** app-level OLS and RLS (so one sync/add gives the user app access and data scope; no manual "add to RLS group").
+- **Separate AD groups per audience** for OLS only; these are already handled by the existing OLS AD sync process (e.g. `Auto.OLSGroupMemberships` → audience `AudienceEntraGroupUID`).
+
+**Feasibility:**
+
+- **Conceptually feasible.** Downstream (e.g. Power BI) can be configured so that:
+  - The **shared** group grants both "can open the app" and the RLS role/data scope.
+  - **Per-audience** groups grant which audience(s) the user belongs to; the current Sakura OLS sync already populates these from `Auto.OLSGroupMemberships`.
+- **Gap today:** Sakura's sync only adds users to **audience-level** (and optionally report-level) groups from `Auto.OLSGroupMemberships`. It does not currently add users to a single "app + RLS" group. To support the shared group, you would need either:
+  - A **sync source** (e.g. a view or feed) that lists "add this user to this app+RLS group" when they have both OLS (to that app) and RLS (for that workspace/domain), and extend the sync script to consume it, or
+  - A separate process (e.g. pipeline or small script) that reads approved OLS+RLS state and adds users to the shared group.
+- **Summary:** Using one AD group for app-level OLS and RLS, and different groups per audience handled by the existing OLS sync, is a feasible and sensible approach; it requires the downstream to use the shared group for both app access and data scope, and an extension to Sakura (or a side process) to populate that shared group, while per-audience groups continue to be handled by the current OLS AD sync process.
+
+---
+
+## Reference: Key Tables and Views
+
+| Purpose | Table / View |
+|--------|---------------|
+| Request | `dbo.PermissionRequests` |
+| OLS/RLS approval | `dbo.PermissionHeaders` (PermissionType 0=OLS, 1=RLS) |
+| OLS item | `dbo.OLSPermissions` → AppAudiences or WorkspaceReports |
+| RLS permission | `dbo.RLSPermissions` → `dbo.RLSPermission*Details` (per domain) |
+| Managed OLS sync source | `Auto.OLSGroupMemberships` |
+| Not-managed OLS (owner view) | `ShareAMER.OLS`, `ShareEMEA.OLS`, ... |
+| RLS (per domain) | `ShareAMER.RLS`, `ShareEMEA.RLS`, ... |
