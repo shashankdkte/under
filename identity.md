@@ -78,31 +78,31 @@ classDiagram
 
 ```mermaid
 flowchart LR
-  A[Create App Registration<br/>(app object in home tenant)] --> B[Service Principal auto-created<br/>in that tenant]
-  B --> C[Enterprise Applications portal<br/>manages that SP]
-  C --> D[Assign users/groups<br/>Configure SSO/consent]
-  B --> E[Grant API permissions<br/>or Azure RBAC roles]
-  E --> F[Runtime: App uses SP identity<br/>for API/resource access]
+  A[Create App Registration (home tenant)] --> B[Service Principal auto-created]
+  B --> C[Enterprise Applications portal manages SP]
+  C --> D[Assign users/groups, configure SSO/consent]
+  B --> E[Grant API permissions or Azure RBAC roles]
+  E --> F[Runtime: App uses SP identity for access]
 ```
 
 ### 4) Third-party SaaS/gallery app adoption
 
 ```mermaid
 flowchart LR
-  S[Gallery / Third-party App<br/>(blueprint elsewhere)] --> T[Service Principal in your tenant]
-  T --> U[Enterprise Applications<br/>admin experience]
-  U --> V[Assign users/groups,<br/>SSO, provisioning, visibility]
-  T --> W[Local access decisions<br/>(API/consent/RBAC)]
+  S[Gallery / Third-party App (external blueprint)] --> T[Service Principal in your tenant]
+  T --> U[Enterprise Applications admin experience]
+  U --> V[Assign users/groups, SSO, provisioning, visibility]
+  T --> W[Local access decisions (API/consent/RBAC)]
 ```
 
 ### 5) Managed identity model (Azure-managed credentials)
 
 ```mermaid
 flowchart TB
-  R[Azure Resource<br/>(App Service/VM/Function/etc.)] --> MI[Enable Managed Identity]
+  R[Azure Resource (App Service/VM/Function/etc.)] --> MI[Enable Managed Identity]
   MI -->|System-assigned| SA[(Identity tied to resource lifecycle)]
   MI -->|User-assigned| UA[(Reusable identity attached to resources)]
-  SA --> AUTH[Authenticate to Entra-backed resources<br/>without handling secrets]
+  SA --> AUTH[Authenticate to Entra-backed resources without handling secrets]
   UA --> AUTH
 ```
 
@@ -110,26 +110,26 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-  Q{Are you defining your own app's<br/>identity & auth settings?}
+  Q{Are you defining your own app's identity and auth settings?}
   Q -->|Yes| AR[Use App Registration]
-  Q -->|No| Q2{Are you enabling local mgmt<br/>of an existing app in tenant?}
-  Q2 -->|Yes| EA[Use Enterprise Applications<br/>(tenant-local mgmt)]
-  Q2 -->|No| Q3{Is this a workload identity<br/>(not human)?}
-  Q3 -->|Yes| Q4{Runs on Azure resource<br/>with Entra-backed targets?}
+  Q -->|No| Q2{Enable local management of existing app in tenant?}
+  Q2 -->|Yes| EA[Use Enterprise Applications (tenant-local mgmt)]
+  Q2 -->|No| Q3{Is this a workload identity (not human)?}
+  Q3 -->|Yes| Q4{Runs on Azure resource with Entra-backed targets?}
   Q4 -->|Yes| MI[Use Managed Identity]
   Q4 -->|No| SP[Use Service Principal]
-  Q3 -->|No| HU[Human user identity<br/>(out of scope here)]
+  Q3 -->|No| HU[Human user identity (out of scope)]
 ```
 
 ### 7) Layered mental model (stack)
 
 ```mermaid
 flowchart TB
-  L1[Layer 1: App registration<br/>Design/definition (blueprint)]
-  L2[Layer 2: Service principal<br/>Tenant-local identity]
-  L3[Layer 3: Enterprise application<br/>Admin/portal view for SP]
-  L4[Layer 4: Service account<br/>Non-human identity category]
-  L5[Layer 5: Managed identity<br/>Azure-native, secretless variant]
+  L1[Layer 1: App registration - definition]
+  L2[Layer 2: Service principal - tenant identity]
+  L3[Layer 3: Enterprise application - admin view]
+  L4[Layer 4: Service account - non-human category]
+  L5[Layer 5: Managed identity - Azure-managed]
 
   L1 --> L2 --> L3
   L4 -. category includes .- L2
@@ -141,7 +141,7 @@ flowchart TB
 ```mermaid
 flowchart LR
   classDef note fill:#fff5b1,stroke:#d4b106,color:#333;
-  A1[App registration<br/>(blueprint)] -. related but not same .- A2[Enterprise application<br/>(tenant admin view)]
+  A1[App registration (blueprint)] -. related but not same .- A2[Enterprise application (tenant admin view)]
   N1[Registration = definition]:::note
   N2[Enterprise app manages SP in-tenant]:::note
   A1 -.-> N1
@@ -161,8 +161,8 @@ flowchart LR
 flowchart LR
   subgraph Entra
     AR1[App Registration]
-    SP1[Service Principal<br/>(tenant identity)]
-    EA1[Enterprise Apps<br/>(admin view)]
+    SP1[Service Principal (tenant identity)]
+    EA1[Enterprise Apps (admin view)]
     AR1 --> SP1
     SP1 <--> EA1
   end
@@ -180,10 +180,10 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-  D[Delegated permissions<br/>(User present)] -->|consent| API1[Target API]
+  D[Delegated permissions (user present)] -->|consent| API1[Target API]
   D -->|access token includes user| OUT1[Access as user]
 
-  A[Application permissions<br/>(No user)] -->|admin consent| API2[Target API]
+  A[Application permissions (no user)] -->|admin consent| API2[Target API]
   A -->|access token as app| OUT2[Daemon/automation access]
 ```
 
@@ -191,8 +191,8 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-  R1[Register new app] --> SP1[Service principal auto-created<br/>in same tenant]
-  R2[Consent to multi-tenant app<br/>from other tenant/gallery] --> SP2[Service principal created<br/>in your tenant]
+  R1[Register new app] --> SP1[Service principal auto-created in same tenant]
+  R2[Consent to multi-tenant app from other tenant/gallery] --> SP2[Service principal created in your tenant]
   SP1 --> EA1[Manage via Enterprise Apps]
   SP2 --> EA1
 ```
@@ -271,7 +271,7 @@ flowchart LR
   SCAT[Service account (category)] --> SPN[Service principal (specific Entra object)]
   SCAT --> MI1[Managed identity (Azure-managed)]
   classDef note fill:#fff5b1,stroke:#d4b106,color:#333;
-  NOTE1[Category label only,<br/>not a single object type.]:::note
+  NOTE1[Category label only; not a single object type.]:::note
   SCAT -.-> NOTE1
 ```
 
